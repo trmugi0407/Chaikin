@@ -20,18 +20,12 @@ impl Point {
     fn distance_to(self, other: Point) -> f32 {
         let dx = self.x - other.x;
         let dy = self.y - other.y;
+
         (dx * dx + dy * dy).sqrt()
     }
 }
 
-// CHAikin's corner-cutting algorithm.
-//
-// For every pair of adjacent points:
-// Q = 75% P0 + 25% P1
-// R = 25% P0 + 75% P1
-//
-// An open curve with N points produces 2N - 2 points.
-
+// Chaikin's Corner Cutting Algorithm.
 fn chaikin(points: &[Point]) -> Vec<Point> {
     if points.len() < 2 {
         return points.to_vec();
@@ -60,10 +54,12 @@ fn chaikin(points: &[Point]) -> Vec<Point> {
     result
 }
 
-// Generate the original curve and seven iterations.
-
+// Build the original curve and seven smoothed versions.
 fn build_steps(points: &[Point]) -> Vec<Vec<Point>> {
-    let mut steps = vec![points.to_vec()];
+    let mut steps = Vec::new();
+
+    steps.push(points.to_vec());
+
     let mut current = points.to_vec();
 
     for _ in 0..MAX_STEPS {
@@ -75,29 +71,26 @@ fn build_steps(points: &[Point]) -> Vec<Vec<Point>> {
 }
 
 // Draw lines connecting the points.
-
-fn draw_curve(points: &[Point], color: Color) {
+fn draw_curve(points: &[Point], color: Color, thickness: f32) {
     for pair in points.windows(2) {
         draw_line(
             pair[0].x,
             pair[0].y,
             pair[1].x,
             pair[1].y,
-            2.5,
+            thickness,
             color,
         );
     }
 }
 
-// Draw circles around the original control points.
-
+// Draw the control points as circles.
 fn draw_control_points(points: &[Point]) {
     for (index, point) in points.iter().enumerate() {
-        draw_circle_lines(
+        draw_circle(
             point.x,
             point.y,
             POINT_RADIUS + 3.0,
-            2.0,
             WHITE,
         );
 
@@ -111,18 +104,17 @@ fn draw_control_points(points: &[Point]) {
         draw_text(
             &format!("{}", index + 1),
             point.x + 10.0,
-            point.y - 8.0,
+            point.y - 10.0,
             18.0,
             WHITE,
         );
     }
 }
 
-// Configure the application window.
-
+// Window settings.
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Chaikin Algorithm".to_owned(),
+        window_title: "Chaikin Algorithm".to_string(),
         window_width: 1000,
         window_height: 700,
         window_resizable: true,
@@ -134,288 +126,239 @@ fn window_conf() -> Conf {
 async fn main() {
     let mut control_points: Vec<Point> = Vec::new();
 
-    let mut steps: Vec<Vec<Point>> = vec![Vec::new()];
+    let mut steps: Vec<Vec<Point>> = Vec::new();
+
+    let mut current_step: usize = 0;
+
+    let mut elapsed: f32 = 0.0;
 
     let mut animation_running = false;
-    let mut current_step: usize = 0;
-    let mut elapsed = 0.0_f32;
 
     let mut dragging: Option<usize> = None;
 
     let mut status = String::from(
-        "Click to add points. Press ENTER to animate.",
+        "Click to add points. Press SPACE to animate."
     );
 
     loop {
-        let dt = get_frame_time();
-
-        // ESCAPE: quit the application.
-
+        // Exit the application.
         if is_key_pressed(KeyCode::Escape) {
             break;
         }
 
-        // C: clear the canvas.
-
+        // Clear the canvas.
         if is_key_pressed(KeyCode::C) {
             control_points.clear();
+            steps.clear();
 
-            steps = vec![Vec::new()];
-
-            animation_running = false;
             current_step = 0;
             elapsed = 0.0;
+            animation_running = false;
             dragging = None;
 
-            status = String::from(
-                "Canvas cleared. Add new points.",
-            );
+            status = String::from("Canvas cleared. Add new points.");
         }
 
-        // ENTER or SPACE: start the animation.
-
-        if is_key_pressed(KeyCode::Enter)
-            || is_key_pressed(KeyCode::Space)
-        {
+        // SPACE is the only animation-start key.
+        if is_key_pressed(KeyCode::Space) {
             if control_points.is_empty() {
                 animation_running = false;
-
                 status = String::from(
-                    "No points selected. Draw points first.",
+                    "Please add points before starting."
                 );
             } else if control_points.len() == 1 {
                 animation_running = false;
                 current_step = 0;
-
                 status = String::from(
-                    "One point: nothing to animate.",
+                    "One point selected. Nothing to animate."
                 );
             } else if control_points.len() == 2 {
                 animation_running = false;
                 current_step = 0;
-
                 status = String::from(
-                    "Two points: straight line.",
+                    "Two points: straight line."
                 );
             } else {
                 steps = build_steps(&control_points);
 
                 current_step = 1;
                 elapsed = 0.0;
-
                 animation_running = true;
 
                 status = String::from(
-                    "ANIMATION STARTED!",
+                    "SPACE PRESSED! ANIMATION STARTED!"
                 );
             }
         }
 
-        // GET MOUSE POSITION.
-        // Keep these variables inside the main loop so
-        // both clicking and dragging can use them.
-
+        // Get the current mouse position.
         let (mouse_x, mouse_y) = mouse_position();
-
         let mouse = Point::new(mouse_x, mouse_y);
 
-        // LEFT CLICK:
-        // Select an existing point or add a new point.
-
+        // Add a point or select an existing point.
         if is_mouse_button_pressed(MouseButton::Left) {
-            let mut nearest: Option<(usize, f32)> = None;
+            let mut selected_point: Option<usize> = None;
+            let mut shortest_distance = DRAG_RADIUS;
 
             for (index, point) in control_points.iter().enumerate() {
                 let distance = point.distance_to(mouse);
 
-                if distance <= DRAG_RADIUS {
-                    match nearest {
-                        Some((_, best_distance))
-                            if best_distance <= distance => {}
-                        _ => nearest = Some((index, distance)),
-                    }
+                if distance < shortest_distance {
+                    shortest_distance = distance;
+                    selected_point = Some(index);
                 }
             }
 
-            if let Some((index, _)) = nearest {
+            if let Some(index) = selected_point {
                 dragging = Some(index);
-
                 animation_running = false;
-                current_step = 0;
-                elapsed = 0.0;
 
-                status = String::from(
-                    "Dragging control point.",
-                );
+                status = String::from("Moving control point.");
             } else {
                 control_points.push(mouse);
 
-                steps = build_steps(&control_points);
-
                 animation_running = false;
                 current_step = 0;
-                elapsed = 0.0;
 
-                status = String::from(
-                    "Point added. Press ENTER to animate.",
+                status = format!(
+                    "{} control point(s) added.",
+                    control_points.len()
                 );
             }
         }
 
-        // DRAG:
-        // Move the selected point in real time.
-
+        // Move a selected point while the mouse is held down.
         if is_mouse_button_down(MouseButton::Left) {
             if let Some(index) = dragging {
-                control_points[index] = mouse;
-
-                steps = build_steps(&control_points);
-
-                animation_running = false;
-                current_step = 0;
-                elapsed = 0.0;
+                if index < control_points.len() {
+                    control_points[index] = mouse;
+                    animation_running = false;
+                    current_step = 0;
+                }
             }
         }
 
-        // RELEASE:
-        // Stop dragging.
-
+        // Stop dragging when the mouse button is released.
         if is_mouse_button_released(MouseButton::Left) {
             dragging = None;
         }
 
-        // ANIMATION:
-        // Display iterations 1, 2, 3, 4, 5, 6, 7.
-        // Restart at iteration 1.
-
+        // Update the animation.
         if animation_running {
-            elapsed += dt;
+            elapsed += get_frame_time();
 
-            if elapsed >= STEP_DURATION {
+            while elapsed >= STEP_DURATION {
                 elapsed -= STEP_DURATION;
+                current_step += 1;
 
-                if current_step >= MAX_STEPS {
+                if current_step > MAX_STEPS {
                     current_step = 1;
-                } else {
-                    current_step += 1;
                 }
             }
         }
 
-        // DRAW BACKGROUND.
+        // Draw the application.
+        clear_background(Color::from_rgba(25, 28, 38, 255));
 
-        clear_background(Color::from_rgba(25, 30, 42, 255));
-
-        // DRAW THE CURVE.
-
+        // Draw the curve.
         if control_points.len() == 1 {
+            let point = control_points[0];
+
             draw_circle(
-                control_points[0].x,
-                control_points[0].y,
+                point.x,
+                point.y,
                 POINT_RADIUS,
                 YELLOW,
             );
         } else if control_points.len() == 2 {
-            draw_curve(&control_points, SKYBLUE);
+            draw_curve(&control_points, YELLOW, 3.0);
         } else if control_points.len() >= 3 {
-            if animation_running {
-                // Original polygon.
-                draw_curve(&control_points, DARKGRAY);
+            // Show the original control polygon.
+            draw_curve(
+                &control_points,
+                DARKGRAY,
+                2.0,
+            );
 
-                // Current Chaikin curve.
-                draw_curve(&steps[current_step], YELLOW);
+            // Show the current smoothed curve.
+            if animation_running && !steps.is_empty() {
+                if current_step < steps.len() {
+                    draw_curve(
+                        &steps[current_step],
+                        YELLOW,
+                        3.0,
+                    );
+                }
             } else {
-                draw_curve(&control_points, GRAY);
+                draw_curve(
+                    &control_points,
+                    YELLOW,
+                    3.0,
+                );
             }
         }
 
-        // Always show the original control points.
-
+        // Always display the original control points.
         draw_control_points(&control_points);
 
-        // DISPLAY INSTRUCTIONS.
-
+        // Display instructions.
         draw_text(
-            "LEFT CLICK: add point | DRAG: move point",
+            "CHAIKIN ALGORITHM",
             20.0,
             30.0,
-            22.0,
+            28.0,
             WHITE,
         );
 
         draw_text(
-            "ENTER / SPACE: animate | C: clear | ESC: quit",
+            "Left click: Add points | Drag: Move points",
             20.0,
-            58.0,
-            22.0,
-            WHITE,
+            60.0,
+            18.0,
+            LIGHTGRAY,
         );
 
         draw_text(
-            &format!(
-                "Control points: {}",
-                control_points.len()
-            ),
+            "SPACE: Animate | C: Clear | ESC: Exit",
             20.0,
-            88.0,
+            85.0,
+            18.0,
+            LIGHTGRAY,
+        );
+
+        draw_text(
+            &status,
             20.0,
-            YELLOW,
+            screen_height() - 45.0,
+            20.0,
+            GREEN,
         );
 
         if animation_running {
             draw_text(
                 &format!(
-                    "Chaikin iteration: {}/{}",
+                    "Iteration: {} / {}",
                     current_step,
                     MAX_STEPS
                 ),
                 20.0,
                 120.0,
-                25.0,
-                GREEN,
+                20.0,
+                YELLOW,
             );
         }
-
-        draw_text(
-            &status,
-            20.0,
-            155.0,
-            18.0,
-            WHITE,
-        );
 
         next_frame().await;
     }
 }
 
-// UNIT TESTS.
-
+// UNIT TESTS
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const EPSILON: f32 = 0.0001;
-
-    fn assert_point(actual: Point, expected: Point) {
-        assert!(
-            (actual.x - expected.x).abs() < EPSILON,
-            "Expected x={}, got {}",
-            expected.x,
-            actual.x
-        );
-
-        assert!(
-            (actual.y - expected.y).abs() < EPSILON,
-            "Expected y={}, got {}",
-            expected.y,
-            actual.y
-        );
-    }
-
-    // Test the 25% and 75% coordinates.
-
     #[test]
-    fn test_one_iteration_calculates_correct_points() {
+    fn test_chaikin_coordinates() {
         let points = vec![
             Point::new(0.0, 0.0),
             Point::new(8.0, 4.0),
@@ -426,55 +369,48 @@ mod tests {
 
         assert_eq!(result.len(), 4);
 
-        assert_point(result[0], Point::new(2.0, 1.0));
-        assert_point(result[1], Point::new(6.0, 3.0));
-        assert_point(result[2], Point::new(8.0, 6.0));
-        assert_point(result[3], Point::new(8.0, 10.0));
+        assert_eq!(result[0], Point::new(2.0, 1.0));
+        assert_eq!(result[1], Point::new(6.0, 3.0));
+        assert_eq!(result[2], Point::new(8.0, 6.0));
+        assert_eq!(result[3], Point::new(8.0, 10.0));
     }
 
-    // Test the number of points after each iteration.
-
     #[test]
-    fn test_point_count_grows_correctly() {
+    fn test_point_count_increases() {
         let mut points = vec![
             Point::new(0.0, 0.0),
-            Point::new(10.0, 0.0),
             Point::new(10.0, 10.0),
+            Point::new(20.0, 0.0),
         ];
 
-        let expected_counts = [4, 6, 10, 18];
+        let expected_counts = vec![4, 6, 10, 18];
 
         for expected in expected_counts {
             points = chaikin(&points);
-
             assert_eq!(points.len(), expected);
         }
     }
 
-    // Empty input must not crash.
-
     #[test]
-    fn test_empty_input() {
+    fn test_empty_points() {
         let points: Vec<Point> = Vec::new();
 
-        assert!(chaikin(&points).is_empty());
+        let result = chaikin(&points);
+
+        assert!(result.is_empty());
     }
 
-    // One point must remain unchanged.
-
     #[test]
-    fn test_single_point_is_unchanged() {
-        let points = vec![
-            Point::new(5.0, 9.0),
-        ];
+    fn test_one_point() {
+        let points = vec![Point::new(5.0, 10.0)];
 
-        assert_eq!(chaikin(&points), points);
+        let result = chaikin(&points);
+
+        assert_eq!(result, points);
     }
 
-    // Two points must produce two points on a straight line.
-
     #[test]
-    fn test_two_points_produce_straight_line() {
+    fn test_two_points() {
         let points = vec![
             Point::new(0.0, 0.0),
             Point::new(100.0, 0.0),
@@ -483,25 +419,21 @@ mod tests {
         let result = chaikin(&points);
 
         assert_eq!(result.len(), 2);
-
-        assert_point(result[0], Point::new(25.0, 0.0));
-        assert_point(result[1], Point::new(75.0, 0.0));
+        assert_eq!(result[0], Point::new(25.0, 0.0));
+        assert_eq!(result[1], Point::new(75.0, 0.0));
     }
 
-    // Test all seven iterations.
-
     #[test]
-    fn test_seven_iterations_are_generated() {
+    fn test_seven_iterations() {
         let points = vec![
             Point::new(0.0, 0.0),
-            Point::new(100.0, 100.0),
-            Point::new(200.0, 0.0),
+            Point::new(10.0, 20.0),
+            Point::new(20.0, 0.0),
         ];
 
         let steps = build_steps(&points);
 
         assert_eq!(steps.len(), 8);
-
         assert_eq!(steps[0].len(), 3);
         assert_eq!(steps[1].len(), 4);
         assert_eq!(steps[7].len(), 130);
