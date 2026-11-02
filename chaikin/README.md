@@ -132,7 +132,3 @@ cargo fmt
 This project uses:
 
 - **Macroquad:** Provides the application window, graphics, drawing, and mouse and keyboard input.
-
-## Author
-
-Created as part of a Rust programming project.
